@@ -1,0 +1,9 @@
+
+.env
+__pycache__
+docker-compose.yml
+dockerfile
+venv
+alembic
+alembic/versions
+
