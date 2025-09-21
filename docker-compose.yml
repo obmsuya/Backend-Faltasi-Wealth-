@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: faltasi
+      POSTGRES_PASSWORD: faltasi
+      POSTGRES_DB: faltasi_wealth
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      - db
+    environment:
+      DATABASE_URL: postgresql://faltasi:faltasi@db:5432/faltasi_wealth
+      SECRET_KEY: a4b81436a8bd1247ef0721c9091cf46992d722a6e1ae9ee6e57b8268faab0b75
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+volumes:
+  db_data:
