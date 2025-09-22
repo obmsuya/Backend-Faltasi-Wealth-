@@ -18,6 +18,8 @@ services:
     restart: always
     depends_on:
       - db
+    env_file:
+      - .env
     environment:
       DATABASE_URL: postgresql://faltasi:faltasi@db:5432/faltasi_wealth
       SECRET_KEY: a4b81436a8bd1247ef0721c9091cf46992d722a6e1ae9ee6e57b8268faab0b75

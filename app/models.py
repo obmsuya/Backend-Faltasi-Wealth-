@@ -17,6 +17,19 @@ class User(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
+# Add this class to your existing models
+class OTPVerification(Base):
+    __tablename__ = "otp_verifications"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    phone = Column(String, nullable=False)
+    otp_hash = Column(String, nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    purpose = Column(SQLEnum('register', 'reset', name='otp_purpose'), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (UniqueConstraint('phone', 'purpose'),)
+
 # Shares offerings table
 class SharesOffering(Base):
     __tablename__ = "shares_offering"
