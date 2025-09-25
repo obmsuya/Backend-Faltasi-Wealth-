@@ -59,6 +59,9 @@ class UserResponse(BaseModel):
     phone: str
     role: str
 
+class RefreshToken(BaseModel):
+    refresh_token: str
+
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -70,7 +73,7 @@ def generate_otp() -> str:
 
 def send_otp_sms(phone: str, otp: str) -> bool:
     if not all([NOTIFY_AFRICA_API_TOKEN, NOTIFY_AFRICA_SENDER_ID, NOTIFY_AFRICA_BASE_URL]):
-        print(f"OTP for {phone}: {otp}")  # Fallback for development
+        print(f"OTP for {phone}: {otp}") 
         return True
     
     url = f"{NOTIFY_AFRICA_BASE_URL}/sms"
