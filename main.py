@@ -1,6 +1,8 @@
 # main.py - Updated with JWT security information
 from fastapi import FastAPI
 from datetime import datetime
+from app.transactions import router as transactions_router
+from app.shares_offering import router as shares_offering_router
 
 # Create the main app
 app = FastAPI(
@@ -12,10 +14,14 @@ app = FastAPI(
 # Import routers - this registers the endpoints automatically
 from app.auth import router as auth_router
 from app.shares import router as shares_router
+from app.transactions import router as transactions_router
+from app.shares_offering import router as shares_offering_router
 
 # Include routers
 app.include_router(auth_router)
 app.include_router(shares_router)
+app.include_router(transactions_router)
+app.include_router(shares_offering_router)
 
 # Basic endpoints
 @app.get("/")
@@ -31,7 +37,17 @@ def read_root():
                 "POST /auth/login - Get access/refresh tokens",
                 "POST /auth/refresh - Refresh access token",
                 "GET /auth/me - Get current user (requires auth)",
-                "GET /shares/ - List available shares (no auth for now)"
+                "GET /shares/ - List available shares (no auth for now)",
+                "POST /shares/ - Create new share offering (admin only)",
+                "GET /transactions/ - List user transactions (requires auth)",
+                "POST /transactions/buy - Buy shares (requires auth)",
+                "POST /transactions/sell - Sell shares (requires auth)",
+                "POST /transactions/{transaction_id}/approve - Approve transaction (admin only)",
+                "POST /shares_offering/ - Create new share offering (admin only)",
+                "GET /shares_offering/ - List all share offerings (no auth for now)",
+                "GET /shares_offering/{id} - Get specific share offering (no auth for now)",
+                "PUT /shares_offering/{id} - Update share offering (admin only)",
+                "DELETE /shares_offering/{id} - Delete share offering (admin only)",
             ]
         }
     }
