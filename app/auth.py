@@ -3,6 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
+from app.redis_client import redis_client
 from pydantic import BaseModel, ConfigDict
 import jwt
 from datetime import datetime, timedelta, timezone
@@ -13,6 +14,7 @@ import random
 import string
 import httpx
 from typing import Dict, Any
+import json
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -62,6 +64,9 @@ class UserResponse(BaseModel):
 class RefreshToken(BaseModel):
     refresh_token: str
 
+# Redis key patterns
+OTP_KEY = "otp:{phone}:{purpose}"
+
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
@@ -93,6 +98,39 @@ def send_otp_sms(phone: str, otp: str) -> bool:
         return response.status_code == 200
     except Exception:
         return False
+
+async def store_otp_in_redis(phone: str, otp: str, purpose: str, expires_in: int = 300):
+    """Store OTP in Redis with expiration"""
+    otp_key = OTP_KEY.format(phone=phone, purpose=purpose)
+    otp_data = {
+        "otp_hash": hash_password(otp),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
+    }
+    await redis_client.setex(otp_key, expires_in, json.dumps(otp_data))
+
+async def verify_otp_from_redis(phone: str, otp: str, purpose: str) -> bool:
+    """Verify OTP from Redis"""
+    otp_key = OTP_KEY.format(phone=phone, purpose=purpose)
+    otp_data = await redis_client.get(otp_key)
+    
+    if not otp_data:
+        return False
+    
+    otp_info = json.loads(otp_data)
+    
+    # Check if OTP is expired
+    expires_at = datetime.fromisoformat(otp_info["expires_at"])
+    if datetime.now(timezone.utc) > expires_at:
+        await redis_client.delete(otp_key)
+        return False
+    
+    # Verify OTP
+    if verify_password(otp, otp_info["otp_hash"]):
+        await redis_client.delete(otp_key)  # Delete OTP after successful verification
+        return True
+    
+    return False
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode = data.copy()
@@ -173,34 +211,28 @@ def create_tokens(user: User) -> TokenResponse:
     )
 
 @router.post("/register/otp")
-async def request_registration_otp(phone_data: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def request_registration_otp(
+    phone_data: ForgotPasswordRequest, 
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db)
+):
     user = db.query(User).filter(User.phone == phone_data.phone).first()
     if user:
         raise HTTPException(status_code=400, detail="Phone already registered")
     
     otp = generate_otp()
     
-    # Store OTP temporarily (in production, use Redis)
-    db.execute("INSERT INTO otp_verifications (phone, otp, expires_at, purpose) VALUES (:phone, :otp, :expires_at, :purpose)",
-               {"phone": phone_data.phone, "otp": hash_password(otp), "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5), "purpose": "register"})
-    db.commit()
+    # Store OTP in Redis instead of database
+    await store_otp_in_redis(phone_data.phone, otp, "register", 300)
     
     background_tasks.add_task(send_otp_sms, phone_data.phone, otp)
     return {"message": "OTP sent", "phone": phone_data.phone}
 
 @router.post("/register/verify", response_model=TokenResponse)
-def verify_registration_otp(otp_data: OTPVerification, db: Session = Depends(get_db)):
-    # Verify OTP
-    verification = db.execute(
-        "SELECT * FROM otp_verifications WHERE phone = :phone AND purpose = 'register' AND expires_at > NOW()",
-        {"phone": otp_data.phone}
-    ).fetchone()
-    
-    if not verification or not verify_password(otp_data.otp, verification[1]):
+async def verify_registration_otp(otp_data: OTPVerification, db: Session = Depends(get_db)):
+    # Verify OTP from Redis
+    if not await verify_otp_from_redis(otp_data.phone, otp_data.otp, "register"):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
-    
-    # Delete used OTP
-    db.execute("DELETE FROM otp_verifications WHERE phone = :phone AND purpose = 'register'", {"phone": otp_data.phone})
  
     user_data = UserCreate(name="New User", phone=otp_data.phone, password="temp")  # Password set later
     
@@ -217,7 +249,7 @@ def verify_registration_otp(otp_data: OTPVerification, db: Session = Depends(get
     return create_tokens(db_user)
 
 @router.post("/register/complete", response_model=TokenResponse)
-def complete_registration(user_data: UserCreate, current_user=Depends(get_current_user)):
+async def complete_registration(user_data: UserCreate, current_user=Depends(get_current_user)):
     # Update user with real name and password
     db = next(get_db())
     user = db.query(User).filter(User.phone == user_data.phone).first()
@@ -231,7 +263,7 @@ def complete_registration(user_data: UserCreate, current_user=Depends(get_curren
     return create_tokens(user)
 
 @router.post("/login", response_model=TokenResponse)
-def login(user_data: UserLogin, db: Session = Depends(get_db)):
+async def login(user_data: UserLogin, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.phone == user_data.phone).first()
     if not user or not verify_password(user_data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
@@ -239,29 +271,27 @@ def login(user_data: UserLogin, db: Session = Depends(get_db)):
     return create_tokens(user)
 
 @router.post("/forgot-password/otp")
-async def request_forgot_password_otp(phone_data: ForgotPasswordRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def request_forgot_password_otp(
+    phone_data: ForgotPasswordRequest, 
+    background_tasks: BackgroundTasks, 
+    db: Session = Depends(get_db)
+):
     user = db.query(User).filter(User.phone == phone_data.phone).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     
     otp = generate_otp()
     
-    db.execute("INSERT INTO otp_verifications (phone, otp, expires_at, purpose) VALUES (:phone, :otp, :expires_at, :purpose)",
-               {"phone": phone_data.phone, "otp": hash_password(otp), "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5), "purpose": "reset"})
-    db.commit()
+    # Store OTP in Redis
+    await store_otp_in_redis(phone_data.phone, otp, "reset", 300)
     
     background_tasks.add_task(send_otp_sms, phone_data.phone, otp)
     return {"message": "Reset OTP sent", "phone": phone_data.phone}
 
 @router.post("/reset-password")
-def reset_password(reset_data: ResetPassword, db: Session = Depends(get_db)):
-    # Verify OTP
-    verification = db.execute(
-        "SELECT * FROM otp_verifications WHERE phone = :phone AND purpose = 'reset' AND expires_at > NOW()",
-        {"phone": reset_data.phone}
-    ).fetchone()
-    
-    if not verification or not verify_password(reset_data.otp, verification[1]):
+async def reset_password(reset_data: ResetPassword, db: Session = Depends(get_db)):
+    # Verify OTP from Redis
+    if not await verify_otp_from_redis(reset_data.phone, reset_data.otp, "reset"):
         raise HTTPException(status_code=400, detail="Invalid or expired OTP")
     
     # Update password
@@ -270,13 +300,12 @@ def reset_password(reset_data: ResetPassword, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
     
     user.password_hash = hash_password(reset_data.new_password)
-    db.execute("DELETE FROM otp_verifications WHERE phone = :phone AND purpose = 'reset'", {"phone": reset_data.phone})
     db.commit()
     
     return {"message": "Password reset successful"}
 
 @router.post("/refresh", response_model=TokenResponse)
-def refresh_token(refresh_data: RefreshToken, db: Session = Depends(get_db)):
+async def refresh_token(refresh_data: RefreshToken, db: Session = Depends(get_db)):
     payload = verify_token(refresh_data.refresh_token, "refresh")
     phone = payload.get("sub")
     
@@ -287,7 +316,7 @@ def refresh_token(refresh_data: RefreshToken, db: Session = Depends(get_db)):
     return create_tokens(user)
 
 @router.get("/me", response_model=UserResponse)
-def read_current_user(current_user = Depends(get_current_user)):
+async def read_current_user(current_user = Depends(get_current_user)):
     return UserResponse(
         id=str(current_user.id),
         name=current_user.name,

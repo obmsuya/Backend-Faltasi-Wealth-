@@ -11,6 +11,14 @@ services:
     volumes:
       - db_data:/var/lib/postgresql/data
 
+  redis: 
+    image: redis:7.4  
+    restart: always
+    ports:
+      - "6379:6379"  
+    volumes:
+      - redis_data:/data 
+
   backend:
     build:
       context: .
@@ -18,11 +26,13 @@ services:
     restart: always
     depends_on:
       - db
+      - redis 
     env_file:
       - .env
     environment:
       DATABASE_URL: postgresql://faltasi:faltasi@db:5432/faltasi_wealth
       SECRET_KEY: a4b81436a8bd1247ef0721c9091cf46992d722a6e1ae9ee6e57b8268faab0b75
+      REDIS_URL: redis://redis:6379/0  # Connect to Redis service
     ports:
       - "8000:8000"
     volumes:
@@ -30,3 +40,4 @@ services:
 
 volumes:
   db_data:
+  redis_data:  

@@ -1,27 +1,42 @@
 # main.py - Updated with JWT security information
 from fastapi import FastAPI
+from contextlib import asynccontextmanager
 from datetime import datetime
 from app.transactions import router as transactions_router
 from app.shares_offering import router as shares_offering_router
+from app.redis_client import get_redis_client, close_redis_client
 
-# Create the main app
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize Redis connection
+    await get_redis_client()
+    print("Redis client initialized")
+    yield
+    # Shutdown: Close Redis connection
+    await close_redis_client()
+    print("Redis client closed")
+
 app = FastAPI(
-    title="FALTASI WEALTH API",  
-    description="Share trading platform MVP with JWT Auth", 
-    version="1.0.0" 
+    title="Shared Buying App", 
+    version="1.0.0",
+    lifespan=lifespan
 )
+
 
 # Import routers - this registers the endpoints automatically
 from app.auth import router as auth_router
 from app.shares import router as shares_router
 from app.transactions import router as transactions_router
 from app.shares_offering import router as shares_offering_router
+from app.portfolio import router as portfolio_router
 
 # Include routers
 app.include_router(auth_router)
 app.include_router(shares_router)
 app.include_router(transactions_router)
 app.include_router(shares_offering_router)
+app.include_router(portfolio_router)
+
 
 # Basic endpoints
 @app.get("/")

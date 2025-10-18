@@ -4,7 +4,9 @@ from typing import List
 from app.database import get_db
 from app.models import Holding, SharesOffering, DividendPayout, Dividend, User
 from app.auth import get_current_user
+from app.redis_client import redis_client
 from pydantic import BaseModel
+import json
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -33,12 +35,23 @@ class DividendResponse(BaseModel):
     paid_at: str
     status: str
 
+# Redis key patterns
+PORTFOLIO_KEY = "user:{user_id}:portfolio"
+DIVIDENDS_KEY = "user:{user_id}:dividends"
+
 @router.get("/holdings", response_model=PortfolioSummary)
-def get_portfolio_holdings(
+async def get_portfolio_holdings(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get user's portfolio holdings with current values"""
+    cache_key = PORTFOLIO_KEY.format(user_id=str(current_user.id))
+    
+    # Try to get from cache first
+    cached_portfolio = await redis_client.get(cache_key)
+    if cached_portfolio:
+        return json.loads(cached_portfolio)
+    
     holdings = db.query(Holding).filter(Holding.user_id == current_user.id).all()
     
     holdings_response = []
@@ -69,19 +82,31 @@ def get_portfolio_holdings(
                 profit_loss=profit_loss
             ))
     
-    return PortfolioSummary(
+    portfolio_summary = PortfolioSummary(
         total_investment=total_investment,
         current_value=current_value,
         total_profit_loss=current_value - total_investment,
         holdings=holdings_response
     )
+    
+    # Cache for 3 minutes (portfolio changes less frequently)
+    await redis_client.setex(cache_key, 180, json.dumps(portfolio_summary.dict()))
+    
+    return portfolio_summary
 
 @router.get("/dividends", response_model=List[DividendResponse])
-def get_dividend_history(
+async def get_dividend_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Get user's dividend payout history"""
+    cache_key = DIVIDENDS_KEY.format(user_id=str(current_user.id))
+    
+    # Try to get from cache first
+    cached_dividends = await redis_client.get(cache_key)
+    if cached_dividends:
+        return json.loads(cached_dividends)
+    
     dividend_payouts = db.query(DividendPayout).filter(
         DividendPayout.user_id == current_user.id
     ).order_by(DividendPayout.paid_at.desc()).all()
@@ -108,5 +133,8 @@ def get_dividend_history(
             paid_at=payout.paid_at.isoformat() if payout.paid_at else "Pending",
             status=payout.status
         ))
+    
+    # Cache for 5 minutes
+    await redis_client.setex(cache_key, 300, json.dumps([item.dict() for item in response]))
     
     return response
