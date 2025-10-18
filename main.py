@@ -6,10 +6,12 @@ from app.transactions import router as transactions_router
 from app.shares_offering import router as shares_offering_router
 from app.redis_client import get_redis_client, close_redis_client
 
+from app.redis_client import get_redis_client, close_redis_client
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: Initialize Redis connection
-    await get_redis_client()
+    await get_redis_client()  # Initialize the connection
     print("Redis client initialized")
     yield
     # Shutdown: Close Redis connection
