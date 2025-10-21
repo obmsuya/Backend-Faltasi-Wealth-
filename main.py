@@ -1,8 +1,10 @@
 # main.py - Updated with JWT security information
 from fastapi import FastAPI
 from contextlib import asynccontextmanager
+from fastapi.middleware.cors import CORSMiddleware
 from datetime import datetime
 from app.transactions import router as transactions_router
+from app.admin import router as admin_router
 from app.shares_offering import router as shares_offering_router
 from app.redis_client import get_redis_client, close_redis_client
 
@@ -10,11 +12,9 @@ from app.redis_client import get_redis_client, close_redis_client
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: Initialize Redis connection
-    await get_redis_client()  # Initialize the connection
+    await get_redis_client()  
     print("Redis client initialized")
     yield
-    # Shutdown: Close Redis connection
     await close_redis_client()
     print("Redis client closed")
 
@@ -23,7 +23,20 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan
 )
+# CORS middleware configuration
+origins = [
+    "http://localhost:3000", 
+    "http://0.0.0.0:8000",
+    "http://127.0.0.1:8000"
+]
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,  # List of allowed origins
+    allow_credentials=True,  # Allow cookies and authentication headers
+    allow_methods=["*"],     # Allow all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],     # Allow all headers
+)
 
 # Import routers - this registers the endpoints automatically
 from app.auth import router as auth_router
@@ -38,6 +51,7 @@ app.include_router(shares_router)
 app.include_router(transactions_router)
 app.include_router(shares_offering_router)
 app.include_router(portfolio_router)
+app.include_router(admin_router)
 
 
 # Basic endpoints
@@ -65,6 +79,18 @@ def read_root():
                 "GET /shares_offering/{id} - Get specific share offering (no auth for now)",
                 "PUT /shares_offering/{id} - Update share offering (admin only)",
                 "DELETE /shares_offering/{id} - Delete share offering (admin only)",
+                "GET /admin/users - Get all users (admin only)",
+                "DELETE /admin/users/{user_id} - Delete user (admin only)",
+                "PATCH /admin/users/{user_id}/toggle-active - Toggle user active status (admin only)",
+                "GET /admin/shares - Get all shares (admin only)",
+                "DELETE /admin/shares/{shares_id} - Delete shares offering (admin only)",
+                "GET /admin/transactions - Get all transactions (admin only)",
+                "GET /admin/holdings - Get all holdings (admin only)",
+                "POST /admin/dividends - Create dividend (admin only)",
+                "GET /admin/dividends - Get all dividends (admin only)",
+                "GET /admin/dividends/payouts - Get dividend payouts (admin only)",
+                "POST /admin/dividends/payouts/{payout_id}/pay - Process dividend payout (admin only)",
+                "DELETE /admin/dividends/{dividend_id} - Delete dividend (admin only)",
             ]
         }
     }
