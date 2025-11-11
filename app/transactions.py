@@ -7,14 +7,28 @@ from app.auth import get_current_user, get_current_admin
 from app.redis_client import redis_client
 from pydantic import BaseModel
 import uuid
+from enum import Enum
 from datetime import datetime
 import json
+from typing import Dict, Any
+import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+class Provider(str, Enum):
+    AIRTEL = "Airtel"
+    TIGO = "Tigo"
+    HALOPESA = "Halopesa"
+    AZAMPESA = "Azampesa"
+    MPESA = "Mpesa"
 
 class BuySharesRequest(BaseModel):
     shares_offering_id: str
     shares_count: int
+    provider: Provider
 
 class SellSharesRequest(BaseModel):
     shares_offering_id: str
@@ -111,7 +125,7 @@ async def initiate_buy_shares(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Initiate buy shares transaction"""
+    """Initiate buy shares transaction using Wapangaji MNO checkout"""
     try:
         shares_uuid = uuid.UUID(buy_data.shares_offering_id)
     except ValueError:
@@ -137,7 +151,7 @@ async def initiate_buy_shares(
     # Calculate total amount
     total_amount = buy_data.shares_count * shares_offering.price_per_share
     
-    # Create transaction
+    # Create local transaction as pending
     transaction = Transaction(
         user_id=current_user.id,
         type='buy',
@@ -151,19 +165,58 @@ async def initiate_buy_shares(
     db.commit()
     db.refresh(transaction)
     
-    # Create payment record
+    # Create local payment record as pending
     payment = Payment(
         user_id=current_user.id,
         transaction_id=transaction.id,
         amount=total_amount,
         type='out',
         status='pending',
-        method='bank_transfer'
+        method='mobile_money'
     )
     db.add(payment)
     db.commit()
     
-    # Invalidate user cache in background
+    # === CALL WAPANGAGI CHECKOUT API ===
+    wapangaji_checkout_url = "https://backend.wapangaji.com/api/v1/payments/azampay/mno/checkout"
+    
+    payment_context = {
+        "system": "shares",
+        "transaction_id": str(transaction.id),
+        "user_id": str(current_user.id),
+        "shares_offering_id": str(shares_offering.id),
+        "company_name": shares_offering.company_name,
+        "callback_url": "https://your-shares-domain.com/payments/callback"  # CHANGE THIS TO YOUR DOMAIN
+    }
+    
+    checkout_payload = {
+        "accountNumber": current_user.phone,  # Use user's phone
+        "amount": str(total_amount),
+        "provider": buy_data.provider,
+        "payment_context": payment_context
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(wapangaji_checkout_url, json=checkout_payload)
+            
+        if response.status_code != 200:
+            error_msg = response.json().get("error", "Unknown error from payment gateway")
+            logger.error(f"Wapangaji checkout failed: {error_msg}")
+            raise HTTPException(status_code=400, detail=f"Payment initiation failed: {error_msg}")
+        
+        wapangaji_data = response.json()
+        external_id = wapangaji_data.get("external_id")
+        
+        # Link external_id to local payment
+        payment.external_id = external_id
+        db.commit()
+        
+    except httpx.RequestError as e:
+        logger.error(f"Network error calling Wapangaji: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to connect to payment service")
+    
+    # Invalidate cache
     background_tasks.add_task(invalidate_user_cache, str(current_user.id))
     
     return TransactionResponse(

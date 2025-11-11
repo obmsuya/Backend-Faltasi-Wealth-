@@ -8,6 +8,11 @@ from app.redis_client import redis_client
 from pydantic import BaseModel
 import uuid
 import json
+from typing import Dict, Any
+import httpx
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/payments", tags=["payments"])
 
@@ -28,11 +33,30 @@ class PaymentCallback(BaseModel):
 
 # Redis key patterns
 USER_PAYMENTS_KEY = "user:{user_id}:payments"
+USER_KEY = "user:{user_id}"
+USER_TRANSACTIONS_KEY = "user:{user_id}:transactions"
+PORTFOLIO_KEY = "user:{user_id}:portfolio"
+SHARES_ALL_KEY = "shares:all"
+SHARES_DETAIL_KEY = "shares:{id}"
 
 async def invalidate_user_payments_cache(user_id: str):
     """Invalidate user payments cache"""
     cache_key = USER_PAYMENTS_KEY.format(user_id=user_id)
     await redis_client.delete(cache_key)
+
+async def invalidate_user_cache(user_id: str):
+    """Invalidate all user-related cache"""
+    user_transactions_key = USER_TRANSACTIONS_KEY.format(user_id=user_id)
+    portfolio_key = PORTFOLIO_KEY.format(user_id=user_id)
+    
+    await redis_client.delete(user_transactions_key, portfolio_key)
+
+async def invalidate_shares_cache():
+    """Invalidate all shares-related cache"""
+    await redis_client.delete(SHARES_ALL_KEY)
+    keys = await redis_client.keys("shares:*")
+    if keys:
+        await redis_client.delete(*keys)
 
 @router.get("/history", response_model=List[PaymentResponse])
 async def get_payment_history(
@@ -71,51 +95,70 @@ async def get_payment_history(
 
 @router.post("/callback")
 async def payment_webhook(
-    callback_data: PaymentCallback,
+    callback_data: Dict[str, Any],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Webhook for payment providers to update payment status"""
+    """
+    Receive relayed callback from Wapangaji after AzamPay processes payment.
+    Expected payload includes: transaction_id (local), external_id, status, etc.
+    """
     try:
-        transaction_uuid = uuid.UUID(callback_data.transaction_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid transaction ID")
-    
-    # Find payment by transaction ID
-    payment = db.query(Payment).filter(
-        Payment.transaction_id == transaction_uuid
-    ).first()
-    
-    if not payment:
-        raise HTTPException(status_code=404, detail="Payment not found")
-    
-    # Update payment status
-    payment.status = callback_data.status
-    payment.external_id = callback_data.external_id
-    
-    # If payment completed, update transaction status
-    if callback_data.status == 'completed':
-        transaction = db.query(Transaction).filter(
-            Transaction.id == transaction_uuid
+        local_transaction_id = callback_data.get("transaction_id")
+        external_id = callback_data.get("external_id")
+        status = callback_data.get("status")
+        amount = callback_data.get("amount")
+
+        if not local_transaction_id:
+            raise HTTPException(status_code=400, detail="Missing transaction_id in callback")
+
+        # Find local payment by external_id or transaction_id
+        payment = db.query(Payment).filter(
+            Payment.external_id == external_id
         ).first()
         
-        if transaction and transaction.status == 'pending':
-            transaction.status = 'approved'
+        if not payment:
+            # Fallback: try by transaction_id from context
+            try:
+                tx_uuid = uuid.UUID(local_transaction_id)
+                payment = db.query(Payment).join(Transaction).filter(
+                    Transaction.id == tx_uuid
+                ).first()
+            except ValueError:
+                pass
+        
+        if not payment:
+            logger.warning(f"Payment not found for callback: {callback_data}")
+            return {"message": "Payment not found, ignored"}
+
+        # Update payment
+        payment.status = status
+        if status == "completed":
+            payment.status = "completed"
+        elif status == "failed":
+            payment.status = "failed"
+
+        # Update transaction
+        transaction = db.query(Transaction).filter(
+            Transaction.id == payment.transaction_id
+        ).first()
+
+        if transaction and transaction.status == "pending" and status == "completed":
+            transaction.status = "approved"
             
-            # Process the transaction (buy/sell)
-            from .transactions import process_buy_transaction, process_sell_transaction
-            if transaction.type == 'buy':
-                process_buy_transaction(transaction, db)
-            elif transaction.type == 'sell':
-                process_sell_transaction(transaction, db)
-    
-    db.commit()
-    
-    # Invalidate relevant caches in background
-    background_tasks.add_task(invalidate_user_payments_cache, str(payment.user_id))
-    from .transactions import invalidate_user_cache
-    background_tasks.add_task(invalidate_user_cache, str(payment.user_id))
-    from .shares_offering import invalidate_shares_cache
-    background_tasks.add_task(invalidate_shares_cache)
-    
-    return {"message": "Payment status updated"}
+            # Execute the buy
+            process_buy_transaction(transaction, db)
+
+        db.commit()
+
+        # Invalidate caches
+        background_tasks.add_task(invalidate_user_payments_cache, str(payment.user_id))
+        background_tasks.add_task(invalidate_user_cache, str(payment.user_id))
+        background_tasks.add_task(invalidate_shares_cache)
+
+        logger.info(f"Callback processed for transaction {local_transaction_id}, status: {status}")
+        return {"message": "Callback processed successfully"}
+
+    except Exception as e:
+        logger.error(f"Error in shares payment callback: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal callback processing error")
