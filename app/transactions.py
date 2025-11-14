@@ -179,6 +179,11 @@ async def initiate_buy_shares(
     
     # === CALL WAPANGAGI CHECKOUT API ===
     wapangaji_checkout_url = "https://backend.wapangaji.com/api/v1/payments/azampay/mno/checkout"
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-KEY": "api_EhUHl1hil0c6bsYQLG1oJxrJqN1ZfjM6"
+    }
     
     payment_context = {
         "system": "shares",
@@ -198,7 +203,7 @@ async def initiate_buy_shares(
     
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(wapangaji_checkout_url, json=checkout_payload)
+            response = await client.post(wapangaji_checkout_url, json=checkout_payload, headers=headers)
             
         if response.status_code != 200:
             error_msg = response.json().get("error", "Unknown error from payment gateway")
