@@ -2,12 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.models import User, SharesOffering, Transaction, Holding, Dividend, DividendPayout
+from app.models import User, SharesOffering, Transaction, Holding, Dividend, DividendPayout, Payment
 from app.auth import get_current_admin
 from app.redis_client import redis_client
 from pydantic import BaseModel
 import uuid
 import json
+import httpx
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -181,6 +182,9 @@ async def toggle_user_active(
     
     return {"message": f"User {'activated' if user.is_active else 'deactivated'} successfully"}
 
+
+
+
 # Shares Management
 @router.get("/shares", response_model=List[AdminSharesOfferingResponse])
 async def get_all_shares(
@@ -208,6 +212,9 @@ async def get_all_shares(
     
     await redis_client.setex(ADMIN_SHARES_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
+
+
+
 
 @router.delete("/shares/{shares_id}")
 async def delete_shares_offering(
@@ -244,6 +251,9 @@ async def delete_shares_offering(
     
     return {"message": "Shares offering deleted successfully"}
 
+
+
+
 # Transactions Management
 @router.get("/transactions", response_model=List[AdminTransactionResponse])
 async def get_all_transactions(
@@ -276,6 +286,10 @@ async def get_all_transactions(
     await redis_client.setex(ADMIN_TRANSACTIONS_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
 
+
+
+
+
 # Holdings Management
 @router.get("/holdings", response_model=List[AdminHoldingResponse])
 async def get_all_holdings(
@@ -306,6 +320,9 @@ async def get_all_holdings(
     
     await redis_client.setex(ADMIN_HOLDINGS_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
+
+
+
 
 # Dividends Management
 @router.post("/dividends", response_model=DividendResponse)
@@ -358,6 +375,9 @@ async def create_dividend(
         declared_at=dividend.declared_at.isoformat()
     )
 
+
+
+
 @router.get("/dividends", response_model=List[DividendResponse])
 async def get_all_dividends(
     db: Session = Depends(get_db),
@@ -383,6 +403,9 @@ async def get_all_dividends(
     
     await redis_client.setex(ADMIN_DIVIDENDS_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
+
+
+
 
 @router.get("/dividends/payouts", response_model=List[DividendPayoutResponse])
 async def get_dividend_payouts(
@@ -419,6 +442,9 @@ async def get_dividend_payouts(
     
     return response
 
+
+
+
 @router.post("/dividends/payouts/{payout_id}/pay")
 async def process_dividend_payout(
     payout_id: str,
@@ -445,6 +471,9 @@ async def process_dividend_payout(
     await invalidate_admin_cache()
     
     return {"message": "Dividend payout marked as paid"}
+
+
+
 
 @router.delete("/dividends/{dividend_id}")
 async def delete_dividend(

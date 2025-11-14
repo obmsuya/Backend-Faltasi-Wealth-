@@ -95,6 +95,8 @@ def process_buy_transaction(transaction: Transaction, db: Session):
         )
         db.add(holding)
 
+
+
 def process_sell_transaction(transaction: Transaction, db: Session):
     """Process approved sell transaction"""
     # Update holding
@@ -117,6 +119,8 @@ def process_sell_transaction(transaction: Transaction, db: Session):
     # If no shares left, delete the holding
     if holding.shares_owned == 0:
         db.delete(holding)
+
+
 
 @router.post("/buy", response_model=TransactionResponse)
 async def initiate_buy_shares(
@@ -236,6 +240,9 @@ async def initiate_buy_shares(
         created_at=transaction.created_at.isoformat()
     )
 
+
+
+
 @router.post("/sell", response_model=TransactionResponse)
 async def initiate_sell_shares(
     sell_data: SellSharesRequest,
@@ -243,7 +250,7 @@ async def initiate_sell_shares(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Initiate sell shares transaction"""
+    """Initiate sell shares transaction with disbursement"""
     try:
         shares_uuid = uuid.UUID(sell_data.shares_offering_id)
     except ValueError:
@@ -282,7 +289,6 @@ async def initiate_sell_shares(
     db.commit()
     db.refresh(transaction)
     
-    # Create payment record for incoming funds
     total_amount = sell_data.shares_count * shares_offering.price_per_share
     payment = Payment(
         user_id=current_user.id,
@@ -290,12 +296,47 @@ async def initiate_sell_shares(
         amount=total_amount,
         type='in',
         status='pending',
-        method='bank_transfer'
+        method='mobile_money'
     )
     db.add(payment)
     db.commit()
     
-    # Invalidate user cache in background
+    wapangaji_disburse_url = "https://backend.wapangaji.com/api/v1/payments/azampay/disburse" 
+
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-KEY": "api_EhUHl1hil0c6bsYQLG1oJxrJqN1ZfjM6"  
+    }
+    payment_context = {
+        "system": "shares",
+        "transaction_id": str(transaction.id),
+        "user_id": str(current_user.id),
+        "shares_offering_id": str(shares_offering.id),
+        "type": "sell_payout",
+        "callback_url": "https://your-shares-domain.com/disbursements/callback"  
+    }
+    
+    disburse_payload = {
+        "destination_phone": current_user.phone,
+        "amount": str(total_amount),
+        "operator": sell_data.provider,  # Dynamic provider from request (assume added to SellSharesRequest)
+        "recipient_name": current_user.name,
+        "payment_context": payment_context
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(wapangaji_disburse_url, json=disburse_payload, headers=headers)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail=f"Disbursement failed: {response.json().get('error')}")
+        
+        wapangaji_data = response.json()
+        external_id = wapangaji_data.get("external_reference_id")
+        
+        # Link to local payment
+        payment.external_id = external_id
+        db.commit()
+    
+    # Invalidate cache
     background_tasks.add_task(invalidate_user_cache, str(current_user.id))
     
     return TransactionResponse(
@@ -309,6 +350,8 @@ async def initiate_sell_shares(
         status=transaction.status,
         created_at=transaction.created_at.isoformat()
     )
+
+
 
 @router.get("/", response_model=List[TransactionResponse])
 async def get_user_transactions(
@@ -349,6 +392,9 @@ async def get_user_transactions(
     await redis_client.setex(cache_key, 120, json.dumps([item.dict() for item in response]))
     
     return response
+
+
+
 
 @router.post("/{transaction_id}/approve")
 async def approve_transaction(
@@ -391,3 +437,97 @@ async def approve_transaction(
     background_tasks.add_task(invalidate_shares_cache)
     
     return {"message": "Transaction approved successfully"}
+
+
+
+@router.post("/disbursements/callback")
+async def disbursement_callback(
+    callback_data: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    try:
+        local_transaction_id = callback_data.get("transaction_id")
+        external_id = callback_data.get("external_reference_id")
+        status = callback_data.get("status")
+
+        if not local_transaction_id:
+            raise HTTPException(status_code=400, detail="Missing transaction_id")
+
+        payment = db.query(Payment).filter(Payment.external_id == external_id).first()
+        if not payment:
+            try:
+                tx_uuid = uuid.UUID(local_transaction_id)
+                payment = db.query(Payment).join(Transaction).filter(Transaction.id == tx_uuid).first()
+            except ValueError:
+                pass
+        
+        if not payment:
+            logger.warning(f"Disbursement payment not found: {callback_data}")
+            return {"message": "Ignored"}
+
+        payment.status = status
+
+        transaction = db.query(Transaction).filter(Transaction.id == payment.transaction_id).first()
+        if transaction and transaction.status == "pending" and status == "completed":
+            transaction.status = "approved"
+            process_sell_transaction(transaction, db) 
+
+        db.commit()
+
+        background_tasks.add_task(invalidate_user_payments_cache, str(payment.user_id))
+        background_tasks.add_task(invalidate_user_cache, str(payment.user_id))
+        background_tasks.add_task(invalidate_shares_cache)
+
+        return {"message": "Disbursement callback processed"}
+
+    except Exception as e:
+        logger.error(f"Disbursement callback error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error processing disbursement callback")
+
+
+
+@router.get("/disbursements/status/{external_id}")
+async def check_disbursement_status(
+    external_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Poll disbursement status from wapangaji"""
+    payment = db.query(Payment).filter(
+        Payment.external_id == external_id,
+        Payment.user_id == current_user.id
+    ).first()
+    
+    if not payment:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    
+    # Call wapangaji status check
+    wapangaji_status_url = "https://backend.wapangaji.com/api/v1/payments/azampay/transactionstatus"
+    params = {
+        "pgReferenceId": payment.transaction_id, 
+        "bankName": "Azampesa"  
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(wapangaji_status_url, params=params)
+        if response.status_code != 200:
+            raise HTTPException(status_code=400, detail="Status check failed")
+        
+        status_data = response.json()
+        new_status = status_data.get("transaction_status")
+        
+        if new_status and new_status != payment.status:
+            payment.status = new_status
+            transaction = db.query(Transaction).filter(Transaction.id == payment.transaction_id).first()
+            if transaction and new_status == "completed":
+                transaction.status = "approved"
+                if transaction.type == "sell":
+                    process_sell_transaction(transaction, db)
+            
+            db.commit()
+    
+    return {
+        "status": payment.status,
+        "details": status_data
+    }
