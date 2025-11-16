@@ -242,6 +242,68 @@ async def initiate_buy_shares(
 
 
 
+@router.post("/payments/callback")
+async def payment_callback(
+    callback_data: Dict[str, Any],
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+
+    try:
+        local_tx_id = callback_data.get("transaction_id")
+        external_id = callback_data.get("external_id")
+        status = callback_data.get("status", "").lower()
+        amount = callback_data.get("amount")
+
+        if not local_tx_id and not external_id:
+            raise HTTPException(status_code=400, detail="Missing transaction_id or external_id")
+
+        # Find Payment record
+        payment = None
+        if external_id:
+            payment = db.query(Payment).filter(Payment.external_id == external_id).first()
+        
+        # Fallback: use local transaction_id from context
+        if not payment and local_tx_id:
+            try:
+                tx_uuid = uuid.UUID(local_tx_id)
+                payment = db.query(Payment).join(Transaction).filter(
+                    Transaction.id == tx_uuid
+                ).first()
+            except ValueError:
+                pass
+
+        if not payment:
+            logger.warning(f"Payment not found for callback: {callback_data}")
+            return {"message": "Payment not found, ignored"}
+
+        # Update Payment
+        payment.status = "completed" if status in ["success", "completed"] else "failed"
+        db.commit()
+
+        # Update Transaction & execute buy
+        transaction = db.query(Transaction).filter(
+            Transaction.id == payment.transaction_id
+        ).first()
+
+        if transaction and transaction.status == "pending" and status in ["success", "completed"]:
+            transaction.status = "approved"
+            db.commit()
+
+            # Execute the actual share purchase
+            process_buy_transaction(transaction, db)
+
+        # Invalidate caches
+        background_tasks.add_task(invalidate_user_cache, str(payment.user_id))
+        background_tasks.add_task(invalidate_shares_cache)
+
+        logger.info(f"Buy callback processed: tx={local_tx_id}, status={status}")
+        return {"message": "Callback processed successfully"}
+
+    except Exception as e:
+        logger.error(f"Buy callback error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Callback processing failed")
+
 
 @router.post("/sell", response_model=TransactionResponse)
 async def initiate_sell_shares(
