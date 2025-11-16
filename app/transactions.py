@@ -195,7 +195,7 @@ async def initiate_buy_shares(
         "user_id": str(current_user.id),
         "shares_offering_id": str(shares_offering.id),
         "company_name": shares_offering.company_name,
-        "callback_url": "https://faltasi.wapangaji.com/payments/callback" 
+        "callback_url": "https://faltasi.wapangaji.com/transactions/payments/callback" 
     }
     
     checkout_payload = {
@@ -313,7 +313,7 @@ async def initiate_sell_shares(
         "user_id": str(current_user.id),
         "shares_offering_id": str(shares_offering.id),
         "type": "sell_payout",
-        "callback_url": "https://faltasi.wapangaji.com/disbursements/callback"  
+        "callback_url": "https://faltasi.wapangaji.com/transactions/disbursements/callback"  
     }
     
     disburse_payload = {
