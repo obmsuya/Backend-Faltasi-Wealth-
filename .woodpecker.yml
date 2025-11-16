@@ -3,13 +3,24 @@ when:
     branch: main
 
 steps:
-  - name: deploy-to-server
-    image: docker:27.3.1-cli
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /srv/faltasi-wealth:/srv/faltasi-wealth
-    commands:
-      - cd /srv/faltasi-wealth
-      - git pull origin main
-      - docker compose down || true
-      - docker compose up -d --build --remove-orphans
+  - name: deploy
+    image: appleboy/drone-ssh
+    settings:
+      host: "140.99.254.193"
+      username: "root"
+      key: |
+        -----BEGIN OPENSSH PRIVATE KEY-----
+        b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+        QyNTUxOQAAACAK1bnaN8oFGAsJiSWj0905s9IfNFTJD5/7OFoFo1kuVAAAAKDHfoawx36G
+        sAAAAAtzc2gtZWQyNTUxOQAAACAK1bnaN8oFGAsJiSWj0905s9IfNFTJD5/7OFoFo1kuVA
+        AAAECzeWGkMiHDL/GylRzwBxjH7aS++nb6UAjLUxh+PGzg8ArVudo3ygUYCwmJJaPT3Tmz
+        0h80VMkPn/s4WgWjWS5UAAAAGGNpQGZhbHRhc2kud2FwYW5nYWppLmNvbQECAwQF
+        -----END OPENSSH PRIVATE KEY-----
+
+      port: 22
+
+      script:
+        - cd /srv/faltasi-wealth
+        - git pull origin main
+        - docker compose down || true
+        - docker compose up -d --build --remove-orphans
