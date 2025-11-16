@@ -1,0 +1,18 @@
+when:
+  event: push
+  branch:
+    include:
+      - main
+
+steps:
+  deploy:
+    name: deploy-to-server
+    image: docker:27.3.1-cli
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /srv/faltasi-wealth:/srv/faltasi-wealth
+    commands:
+      - cd /srv/faltasi-wealth
+      - git pull origin main
+      - docker compose down || true
+      - docker compose up -d --build --remove-orphans
