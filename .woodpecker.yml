@@ -24,3 +24,4 @@ steps:
         - git pull origin main
         - docker compose down || true
         - docker compose up -d --build --remove-orphans
+        - docker compose exec backend alembic upgrade head
