@@ -501,3 +501,44 @@ async def delete_dividend(
     await invalidate_admin_cache()
     
     return {"message": "Dividend deleted successfully"}
+
+
+@router.post("/create-admin")
+async def create_first_admin(
+    phone: str,
+    password: str,
+    db: Session = Depends(get_db)
+):
+    # Check if any admin already exists
+    existing_admin = db.query(User).filter(User.role == "admin").first()
+    if existing_admin:
+        raise HTTPException(
+            status_code=400,
+            detail="Admin user already exists. Cannot create another."
+        )
+
+    # Check if user with this phone already exists
+    existing_user = db.query(User).filter(User.phone == phone).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="User with this phone already exists"
+        )
+
+    # Create the admin
+    admin_user = User(
+        name="Administrator",
+        phone=phone,
+        password_hash=hash_password(password),
+        role="admin",
+        is_active=True
+    )
+    db.add(admin_user)
+    db.commit()
+    db.refresh(admin_user)
+
+    return {
+        "message": "Admin created successfully",
+        "phone": admin_user.phone,
+        "role": admin_user.role
+    }
