@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
 from app.models import User, SharesOffering, Transaction, Holding, Dividend, DividendPayout, Payment
-from app.auth import get_current_admin
+from app.auth import get_current_admin, hash_password
 from app.redis_client import redis_client
 from pydantic import BaseModel
 import uuid
@@ -75,6 +75,10 @@ class DividendPayoutResponse(BaseModel):
     amount_received: float
     status: str
     paid_at: Optional[str]
+
+class CreateAdminRequest(BaseModel):
+    phone: str
+    password: str
 
 # Redis key patterns for admin
 ADMIN_USERS_KEY = "admin:users"
@@ -505,11 +509,10 @@ async def delete_dividend(
 
 @router.post("/create-admin")
 async def create_first_admin(
-    phone: str,
-    password: str,
+    request: CreateAdminRequest,
     db: Session = Depends(get_db)
 ):
-    # Check if any admin already exists
+
     existing_admin = db.query(User).filter(User.role == "admin").first()
     if existing_admin:
         raise HTTPException(
@@ -517,19 +520,17 @@ async def create_first_admin(
             detail="Admin user already exists. Cannot create another."
         )
 
-    # Check if user with this phone already exists
-    existing_user = db.query(User).filter(User.phone == phone).first()
+    existing_user = db.query(User).filter(User.phone == request.phone).first()
     if existing_user:
         raise HTTPException(
             status_code=400,
             detail="User with this phone already exists"
         )
 
-    # Create the admin
     admin_user = User(
         name="Administrator",
-        phone=phone,
-        password_hash=hash_password(password),
+        phone=request.phone,
+        password_hash=hash_password(request.password),
         role="admin",
         is_active=True
     )
