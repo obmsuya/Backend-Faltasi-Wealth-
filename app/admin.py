@@ -12,10 +12,6 @@ import httpx
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
-@app.on_event("startup")  # If using FastAPI startup event
-async def startup_event():
-    global redis_client
-    redis_client = await get_redis_client()
 
 # Response Models
 class UserResponse(BaseModel):
