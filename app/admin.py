@@ -4,13 +4,18 @@ from typing import List, Optional
 from app.database import get_db
 from app.models import User, SharesOffering, Transaction, Holding, Dividend, DividendPayout, Payment
 from app.auth import get_current_admin, hash_password
-from app.redis_client import redis_client
+from app.redis_client import redis_client, get_redis_client
 from pydantic import BaseModel
 import uuid
 import json
 import httpx
 
 router = APIRouter(prefix="/admin", tags=["admin"])
+
+@app.on_event("startup")  # If using FastAPI startup event
+async def startup_event():
+    global redis_client
+    redis_client = await get_redis_client()
 
 # Response Models
 class UserResponse(BaseModel):
@@ -111,6 +116,7 @@ async def get_all_users(
     admin: User = Depends(get_current_admin)
 ):
     """Get all users in the system"""
+    redis_client = await get_redis_client()
     cached_users = await redis_client.get(ADMIN_USERS_KEY)
     if cached_users:
         return json.loads(cached_users)
