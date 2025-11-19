@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.models import SharesOffering, User
+from app.models import SharesOffering, User, Transaction, Holding
 from app.auth import get_current_user, get_current_admin
 from app.redis_client import redis_client
 from pydantic import BaseModel
@@ -178,3 +178,36 @@ async def update_shares_offering(
         available_shares=share.available_shares,
         created_at=share.created_at.isoformat()
     )
+
+@router.delete("/{shares_id}")
+async def delete_shares_offering(
+    shares_id: str,
+    db: Session = Depends(get_db),
+    admin: User = Depends(get_current_admin)
+):
+    """Admin only - Delete shares offering"""
+    try:
+        share_uuid = uuid.UUID(shares_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid shares ID")
+    
+    share = db.query(SharesOffering).filter(SharesOffering.id == share_uuid).first()
+    if not share:
+        raise HTTPException(status_code=404, detail="Shares offering not found")
+
+    transactions_count = db.query(Transaction).filter(Transaction.shares_offering_id == share_uuid).count()
+    holdings_count = db.query(Holding).filter(Holding.shares_offering_id == share_uuid).count()
+    
+    if transactions_count > 0 or holdings_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot delete shares offering with existing transactions or holdings"
+        )
+    
+    db.delete(share)
+    db.commit()
+    
+    # Invalidate cache after deletion
+    await invalidate_shares_cache()
+    
+    return {"message": "Shares offering deleted successfully"}
