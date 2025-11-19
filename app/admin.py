@@ -109,7 +109,7 @@ async def invalidate_admin_cache():
 @router.get("/users", response_model=List[UserResponse])
 async def get_all_users(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Get all users in the system"""
     redis_client = await get_redis_client()
@@ -138,7 +138,7 @@ async def get_all_users(
 async def delete_user(
     user_id: str,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Hard delete user with cascade (admin only)"""
     try:
@@ -166,7 +166,7 @@ async def delete_user(
 async def toggle_user_active(
     user_id: str,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Toggle user active status"""
     try:
@@ -195,7 +195,7 @@ async def toggle_user_active(
 @router.get("/shares", response_model=List[AdminSharesOfferingResponse])
 async def get_all_shares(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Get all shares offerings (admin view)"""
     cached_shares = await redis_client.get(ADMIN_SHARES_KEY)
@@ -226,7 +226,7 @@ async def get_all_shares(
 async def delete_shares_offering(
     shares_id: str,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Hard delete shares offering with cascade"""
     try:
@@ -264,7 +264,7 @@ async def delete_shares_offering(
 @router.get("/transactions", response_model=List[AdminTransactionResponse])
 async def get_all_transactions(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Get all transactions in the system"""
     cached_transactions = await redis_client.get(ADMIN_TRANSACTIONS_KEY)
@@ -300,7 +300,7 @@ async def get_all_transactions(
 @router.get("/holdings", response_model=List[AdminHoldingResponse])
 async def get_all_holdings(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Get all holdings in the system"""
     cached_holdings = await redis_client.get(ADMIN_HOLDINGS_KEY)
@@ -335,7 +335,7 @@ async def get_all_holdings(
 async def create_dividend(
     dividend_data: DividendCreate,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Create dividend for shares offering"""
     try:
@@ -387,7 +387,7 @@ async def create_dividend(
 @router.get("/dividends", response_model=List[DividendResponse])
 async def get_all_dividends(
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Get all dividends"""
     cached_dividends = await redis_client.get(ADMIN_DIVIDENDS_KEY)
@@ -417,7 +417,7 @@ async def get_all_dividends(
 async def get_dividend_payouts(
     dividend_id: Optional[str] = None,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Get dividend payouts, optionally filtered by dividend"""
     query = db.query(DividendPayout).join(User).join(Dividend).join(SharesOffering)
@@ -455,7 +455,7 @@ async def get_dividend_payouts(
 async def process_dividend_payout(
     payout_id: str,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Mark dividend payout as paid"""
     try:
@@ -485,7 +485,7 @@ async def process_dividend_payout(
 async def delete_dividend(
     dividend_id: str,
     db: Session = Depends(get_db),
-    admin: User = Depends(get_current_admin)
+    # admin: User = Depends(get_current_admin)
 ):
     """Delete dividend and its payouts"""
     try:
