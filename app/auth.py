@@ -1,10 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.redis_client import get_redis_client
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Optional

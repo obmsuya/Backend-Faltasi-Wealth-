@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import SharesOffering
 
-router = APIRouter(prefix="/shares", tags=["shares"])
+router = APIRouter(prefix="/shares_available", tags=["shares"])
 
 @router.get("/")
 def list_available_shares(db: Session = Depends(get_db)):
