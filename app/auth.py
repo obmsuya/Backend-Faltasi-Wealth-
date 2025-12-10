@@ -88,10 +88,9 @@ def send_otp_sms(phone: str, otp: str) -> bool:
         print(f"DEBUG OTP for {phone}: {otp}") 
         return True
     
-    # Clean phone number (remove + if present, ensure format matches API requirements)
     clean_phone = phone.replace("+", "").strip()
     
-    url = f"{NOTIFY_AFRICA_BASE_URL}/sms"
+    url = f"{NOTIFY_AFRICA_BASE_URL}"
     
     # Log the payload we are about to send
     payload = {
