@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
-from app.redis_client import redis_client
+from app.redis_client import get_redis_client
 from pydantic import BaseModel, ConfigDict
 import jwt
 from datetime import datetime, timedelta, timezone
@@ -101,18 +101,20 @@ def send_otp_sms(phone: str, otp: str) -> bool:
 
 async def store_otp_in_redis(phone: str, otp: str, purpose: str, expires_in: int = 300):
     """Store OTP in Redis with expiration"""
+    redis = await get_redis_client()
     otp_key = OTP_KEY.format(phone=phone, purpose=purpose)
     otp_data = {
         "otp_hash": hash_password(otp),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=expires_in)).isoformat()
     }
-    await redis_client.setex(otp_key, expires_in, json.dumps(otp_data))
+    await redis.setex(otp_key, expires_in, json.dumps(otp_data))
 
 async def verify_otp_from_redis(phone: str, otp: str, purpose: str) -> bool:
     """Verify OTP from Redis"""
+    redis = await get_redis_client()
     otp_key = OTP_KEY.format(phone=phone, purpose=purpose)
-    otp_data = await redis_client.get(otp_key)
+    otp_data = await redis.get(otp_key)
     
     if not otp_data:
         return False
@@ -122,12 +124,12 @@ async def verify_otp_from_redis(phone: str, otp: str, purpose: str) -> bool:
     # Check if OTP is expired
     expires_at = datetime.fromisoformat(otp_info["expires_at"])
     if datetime.now(timezone.utc) > expires_at:
-        await redis_client.delete(otp_key)
+        await redis.delete(otp_key)
         return False
     
     # Verify OTP
     if verify_password(otp, otp_info["otp_hash"]):
-        await redis_client.delete(otp_key)  # Delete OTP after successful verification
+        await redis.delete(otp_key) 
         return True
     
     return False
