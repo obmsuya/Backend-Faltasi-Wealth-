@@ -74,7 +74,6 @@ async def create_shares_offering(
 @router.get("/", response_model=List[SharesOfferingResponse])
 async def get_available_shares(
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
 ):
     """Get all available shares offerings"""
     redis = await get_redis_client()  
