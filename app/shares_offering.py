@@ -108,7 +108,6 @@ async def get_available_shares(
 async def get_shares_details(
     shares_id: str,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
 ):
     """Get specific shares offering details"""
     try:
