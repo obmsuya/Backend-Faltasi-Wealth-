@@ -4,7 +4,7 @@ from typing import List, Optional
 from app.database import get_db
 from app.models import User, SharesOffering, Transaction, Holding, Dividend, DividendPayout, Payment
 from app.auth import get_current_admin, hash_password
-from app.redis_client import redis_client, get_redis_client
+from app.redis_client import get_redis_client
 from pydantic import BaseModel
 import uuid
 import json
@@ -90,6 +90,7 @@ ADMIN_DIVIDENDS_KEY = "admin:dividends"
 
 async def invalidate_admin_cache():
     """Invalidate all admin-related cache"""
+    client = await get_redis_client()
     keys = [
         ADMIN_USERS_KEY,
         ADMIN_SHARES_KEY,
@@ -98,12 +99,12 @@ async def invalidate_admin_cache():
         ADMIN_DIVIDENDS_KEY
     ]
     # Also delete pattern-based keys
-    pattern_keys = await redis_client.keys("admin:*")
+    pattern_keys = await client.keys("admin:*")
     if pattern_keys:
         keys.extend(pattern_keys)
     
     if keys:
-        await redis_client.delete(*keys)
+        await client.delete(*keys)
 
 # Users Management
 @router.get("/users", response_model=List[UserResponse])
@@ -198,7 +199,8 @@ async def get_all_shares(
     # admin: User = Depends(get_current_admin)
 ):
     """Get all shares offerings (admin view)"""
-    cached_shares = await redis_client.get(ADMIN_SHARES_KEY)
+    redis = await get_redis_client()
+    cached_shares = await redis.get(ADMIN_SHARES_KEY)
     if cached_shares:
         return json.loads(cached_shares)
     
@@ -216,7 +218,7 @@ async def get_all_shares(
         for share in shares
     ]
     
-    await redis_client.setex(ADMIN_SHARES_KEY, 300, json.dumps([item.dict() for item in response]))
+    await redis.setex(ADMIN_SHARES_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
 
 
@@ -267,7 +269,8 @@ async def get_all_transactions(
     # admin: User = Depends(get_current_admin)
 ):
     """Get all transactions in the system"""
-    cached_transactions = await redis_client.get(ADMIN_TRANSACTIONS_KEY)
+    redis = await get_redis_client()
+    cached_transactions = await redis.get(ADMIN_TRANSACTIONS_KEY)
     if cached_transactions:
         return json.loads(cached_transactions)
     
@@ -289,7 +292,7 @@ async def get_all_transactions(
             created_at=transaction.created_at.isoformat()
         ))
     
-    await redis_client.setex(ADMIN_TRANSACTIONS_KEY, 300, json.dumps([item.dict() for item in response]))
+    await redis.setex(ADMIN_TRANSACTIONS_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
 
 
@@ -303,7 +306,8 @@ async def get_all_holdings(
     # admin: User = Depends(get_current_admin)
 ):
     """Get all holdings in the system"""
-    cached_holdings = await redis_client.get(ADMIN_HOLDINGS_KEY)
+    redis = await get_redis_client()
+    cached_holdings = await redis.get(ADMIN_HOLDINGS_KEY)
     if cached_holdings:
         return json.loads(cached_holdings)
     
@@ -324,7 +328,7 @@ async def get_all_holdings(
             created_at=holding.created_at.isoformat()
         ))
     
-    await redis_client.setex(ADMIN_HOLDINGS_KEY, 300, json.dumps([item.dict() for item in response]))
+    await redis.setex(ADMIN_HOLDINGS_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
 
 
@@ -390,7 +394,8 @@ async def get_all_dividends(
     # admin: User = Depends(get_current_admin)
 ):
     """Get all dividends"""
-    cached_dividends = await redis_client.get(ADMIN_DIVIDENDS_KEY)
+    redis = await get_redis_client()
+    cached_dividends = await redis.get(ADMIN_DIVIDENDS_KEY)
     if cached_dividends:
         return json.loads(cached_dividends)
     
@@ -407,7 +412,7 @@ async def get_all_dividends(
         for dividend in dividends
     ]
     
-    await redis_client.setex(ADMIN_DIVIDENDS_KEY, 300, json.dumps([item.dict() for item in response]))
+    await redis.setex(ADMIN_DIVIDENDS_KEY, 300, json.dumps([item.dict() for item in response]))
     return response
 
 
