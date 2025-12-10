@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -15,6 +15,10 @@ import string
 import httpx
 from typing import Dict, Any
 import json
+import logging 
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -77,16 +81,25 @@ def generate_otp() -> str:
     return ''.join(random.choices(string.digits, k=6))
 
 def send_otp_sms(phone: str, otp: str) -> bool:
+    logger.info(f"--- SMS START: Preparing to send OTP to {phone} ---")
+
     if not all([NOTIFY_AFRICA_API_TOKEN, NOTIFY_AFRICA_SENDER_ID, NOTIFY_AFRICA_BASE_URL]):
-        print(f"OTP for {phone}: {otp}") 
+        logger.warning("MISSING CONFIG: SMS environment variables are not set. Simulating success.")
+        print(f"DEBUG OTP for {phone}: {otp}") 
         return True
     
+    # Clean phone number (remove + if present, ensure format matches API requirements)
+    clean_phone = phone.replace("+", "").strip()
+    
     url = f"{NOTIFY_AFRICA_BASE_URL}/sms"
+    
+    # Log the payload we are about to send
     payload = {
-        "recipients": [f"+{phone}"],
+        "recipients": [f"+{clean_phone}"], # Ensure + is added if API requires international format
         "message": f"Your FALTASI WEALTH verification code is: {otp}",
         "sender": NOTIFY_AFRICA_SENDER_ID
     }
+    logger.info(f"SMS PAYLOAD: {json.dumps(payload)}")
     
     headers = {
         "Authorization": f"Bearer {NOTIFY_AFRICA_API_TOKEN}",
@@ -94,14 +107,34 @@ def send_otp_sms(phone: str, otp: str) -> bool:
     }
     
     try:
-        response = httpx.post(url, json=payload, headers=headers, timeout=10)
-        return response.status_code == 200
-    except Exception:
+        logger.info(f"SMS REQUEST: Sending POST to {url}")
+        response = httpx.post(url, json=payload, headers=headers, timeout=15)
+        
+        # Log the raw response from Notify Africa
+        logger.info(f"SMS RESPONSE CODE: {response.status_code}")
+        logger.info(f"SMS RESPONSE BODY: {response.text}")
+        
+        if response.status_code == 200:
+            logger.info("--- SMS SUCCESS: Message sent successfully ---")
+            return True
+        else:
+            logger.error(f"--- SMS FAILURE: API returned error status {response.status_code} ---")
+            return False
+            
+    except httpx.TimeoutException:
+        logger.error("--- SMS ERROR: Request timed out ---")
+        return False
+    except httpx.RequestError as e:
+        logger.error(f"--- SMS ERROR: Network/Request error: {str(e)} ---")
+        return False
+    except Exception as e:
+        logger.error(f"--- SMS ERROR: Unexpected exception: {str(e)} ---")
         return False
 
 async def store_otp_in_redis(phone: str, otp: str, purpose: str, expires_in: int = 300):
     """Store OTP in Redis with expiration"""
     redis = await get_redis_client()
+    
     otp_key = OTP_KEY.format(phone=phone, purpose=purpose)
     otp_data = {
         "otp_hash": hash_password(otp),
@@ -112,7 +145,9 @@ async def store_otp_in_redis(phone: str, otp: str, purpose: str, expires_in: int
 
 async def verify_otp_from_redis(phone: str, otp: str, purpose: str) -> bool:
     """Verify OTP from Redis"""
+    # Use get_redis_client() helper
     redis = await get_redis_client()
+    
     otp_key = OTP_KEY.format(phone=phone, purpose=purpose)
     otp_data = await redis.get(otp_key)
     
