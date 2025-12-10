@@ -87,35 +87,51 @@ def send_otp_sms(phone: str, otp: str) -> bool:
         logger.warning("MISSING CONFIG: SMS environment variables are not set. Simulating success.")
         print(f"DEBUG OTP for {phone}: {otp}") 
         return True
-    
+
     clean_phone = phone.replace("+", "").strip()
+    if clean_phone.startswith("0") and len(clean_phone) == 10:
+        clean_phone = "255" + clean_phone[1:]
+    elif len(clean_phone) == 9:
+        clean_phone = "255" + clean_phone
     
-    url = f"{NOTIFY_AFRICA_BASE_URL}"
+    url = NOTIFY_AFRICA_BASE_URL 
     
-    # Log the payload we are about to send
     payload = {
-        "recipients": [f"+{clean_phone}"], # Ensure + is added if API requires international format
+        "phone_number": clean_phone, 
         "message": f"Your FALTASI WEALTH verification code is: {otp}",
-        "sender": NOTIFY_AFRICA_SENDER_ID
+        "sender_id": NOTIFY_AFRICA_SENDER_ID 
     }
+    
     logger.info(f"SMS PAYLOAD: {json.dumps(payload)}")
     
     headers = {
         "Authorization": f"Bearer {NOTIFY_AFRICA_API_TOKEN}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "Accept": "application/json"
     }
     
     try:
         logger.info(f"SMS REQUEST: Sending POST to {url}")
-        response = httpx.post(url, json=payload, headers=headers, timeout=15)
+        response = httpx.post(url, json=payload, headers=headers, timeout=30)
         
-        # Log the raw response from Notify Africa
         logger.info(f"SMS RESPONSE CODE: {response.status_code}")
         logger.info(f"SMS RESPONSE BODY: {response.text}")
         
-        if response.status_code == 200:
-            logger.info("--- SMS SUCCESS: Message sent successfully ---")
-            return True
+        # Working system accepts 200 or 202
+        if response.status_code in [200, 202]:
+            try:
+                data = response.json()
+                # Check for explicit 'success' flag in body
+                if data.get("success", False): 
+                    logger.info("--- SMS SUCCESS: Message sent successfully ---")
+                    return True
+                else:
+                    logger.error(f"--- SMS FAILURE: API returned success=False. Msg: {data.get('message')} ---")
+                    return False
+            except json.JSONDecodeError:
+                # If it's 200 but not JSON, assume it worked (fallback)
+                logger.warning("--- SMS WARNING: 200 OK but response was not JSON ---")
+                return True
         else:
             logger.error(f"--- SMS FAILURE: API returned error status {response.status_code} ---")
             return False
@@ -123,13 +139,9 @@ def send_otp_sms(phone: str, otp: str) -> bool:
     except httpx.TimeoutException:
         logger.error("--- SMS ERROR: Request timed out ---")
         return False
-    except httpx.RequestError as e:
-        logger.error(f"--- SMS ERROR: Network/Request error: {str(e)} ---")
-        return False
     except Exception as e:
         logger.error(f"--- SMS ERROR: Unexpected exception: {str(e)} ---")
         return False
-
 async def store_otp_in_redis(phone: str, otp: str, purpose: str, expires_in: int = 300):
     """Store OTP in Redis with expiration"""
     redis = await get_redis_client()
