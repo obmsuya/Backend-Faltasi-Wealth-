@@ -4,7 +4,7 @@ from typing import List, Optional
 from app.database import get_db
 from app.models import SharesOffering, User, Transaction, Holding
 from app.auth import get_current_user, get_current_admin
-from app.redis_client import redis_client
+from app.redis_client import get_redis_client 
 from pydantic import BaseModel
 import uuid
 import json
@@ -34,11 +34,12 @@ SHARES_DETAIL_KEY = "shares:{id}"
 
 async def invalidate_shares_cache():
     """Invalidate all shares-related cache"""
-    await redis_client.delete(SHARES_ALL_KEY)
-    # Also delete individual share caches using pattern
-    keys = await redis_client.keys("shares:*")
+    redis = await get_redis_client() 
+    await redis.delete(SHARES_ALL_KEY)
+
+    keys = await redis.keys("shares:*")
     if keys:
-        await redis_client.delete(*keys)
+        await redis.delete(*keys)
 
 @router.post("/", response_model=SharesOfferingResponse)
 async def create_shares_offering(
@@ -76,8 +77,10 @@ async def get_available_shares(
     current_user: User = Depends(get_current_user)
 ):
     """Get all available shares offerings"""
+    redis = await get_redis_client()  
+
     # Try to get from cache first
-    cached_shares = await redis_client.get(SHARES_ALL_KEY)
+    cached_shares = await redis.get(SHARES_ALL_KEY)
     if cached_shares:
         return json.loads(cached_shares)
     
@@ -97,8 +100,8 @@ async def get_available_shares(
         for share in shares
     ]
     
-    # Cache for 5 minutes
-    await redis_client.setex(SHARES_ALL_KEY, 300, json.dumps([item.dict() for item in response]))
+
+    await redis.setex(SHARES_ALL_KEY, 300, json.dumps([item.dict() for item in response]))
     
     return response
 
@@ -114,10 +117,11 @@ async def get_shares_details(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid shares ID")
     
+    redis = await get_redis_client() 
     cache_key = SHARES_DETAIL_KEY.format(id=shares_id)
     
     # Try to get from cache first
-    cached_share = await redis_client.get(cache_key)
+    cached_share = await redis.get(cache_key)
     if cached_share:
         return json.loads(cached_share)
     
@@ -134,8 +138,8 @@ async def get_shares_details(
         created_at=share.created_at.isoformat()
     )
     
-    # Cache for 5 minutes
-    await redis_client.setex(cache_key, 300, json.dumps(response.dict()))
+
+    await redis.setex(cache_key, 300, json.dumps(response.dict()))
     
     return response
 
