@@ -121,7 +121,6 @@ def send_otp_sms(phone: str, otp: str) -> bool:
         if response.status_code in [200, 202]:
             try:
                 data = response.json()
-                # Check for explicit 'success' flag in body
                 if data.get("success", False): 
                     logger.info("--- SMS SUCCESS: Message sent successfully ---")
                     return True
